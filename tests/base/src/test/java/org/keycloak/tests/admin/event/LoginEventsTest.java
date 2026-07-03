@@ -96,16 +96,16 @@ public class LoginEventsTest {
         List<EventRepresentation> events = events();
         Assertions.assertEquals(1, events.size());
         EventAssertion.assertError(events.get(0))
-                .type(EventType.LOGIN_ERROR).isCodeId()
+                .type(EventType.LOGIN_ERROR)
                 .error("user_not_found")
                 .userId(null)
                 .sessionId(null)
-                .isCodeId()
+                .hasCodeId()
                 .hasIpAddress()
                 .details(Details.AUTH_METHOD, "openid-connect")
                 .details(Details.AUTH_TYPE, "code")
                 .details(Details.USERNAME, "bad")
-                .details(Details.REDIRECT_URI, "http://127.0.0.1:8500/callback/oauth");
+                .details(Details.REDIRECT_URI, oAuthClient.getRedirectUri());
     }
 
     @Test

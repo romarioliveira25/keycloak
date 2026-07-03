@@ -15,6 +15,7 @@ import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.utils.KeycloakModelUtils;
+import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.GroupRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
@@ -60,6 +61,7 @@ import static org.keycloak.scim.resource.Scim.getCoreSchema;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -243,6 +245,46 @@ public class UserTest extends AbstractScimTest {
     }
 
     @Test
+    public void testGetByIdServiceAccount() {
+        String clientId = "service-account-target-" + KeycloakModelUtils.generateId();
+        ClientRepresentation targetClient = ClientBuilder.create()
+                .clientId(clientId)
+                .secret("secret")
+                .serviceAccountsEnabled(true)
+                .enabled(true)
+                .build();
+        try (Response response = realm.admin().clients().create(targetClient)) {
+            targetClient.setId(ApiUtil.getCreatedId(response));
+        }
+        realm.cleanup().add(realm -> realm.clients().get(targetClient.getId()).remove());
+
+        UserRepresentation serviceAccount = realm.admin().clients().get(targetClient.getId()).getServiceAccountUser();
+        User actual = client.users().get(serviceAccount.getId());
+
+        assertNull(actual);
+    }
+
+    @Test
+    public void testQueryByIdServiceAccount() {
+        String clientId = "service-account-target-" + KeycloakModelUtils.generateId();
+        ClientRepresentation targetClient = ClientBuilder.create()
+                .clientId(clientId)
+                .secret("secret")
+                .serviceAccountsEnabled(true)
+                .enabled(true)
+                .build();
+        try (Response response = realm.admin().clients().create(targetClient)) {
+            targetClient.setId(ApiUtil.getCreatedId(response));
+        }
+        realm.cleanup().add(realm -> realm.clients().get(targetClient.getId()).remove());
+
+        UserRepresentation serviceAccount = realm.admin().clients().get(targetClient.getId()).getServiceAccountUser();
+        ListResponse<User> response = client.users().getAll(ResourceFilter.filter().eq("id", serviceAccount.getId()).build());
+
+        assertEquals(0, response.getTotalResults());
+    }
+
+    @Test
     public void testGetExisting() {
         UserRepresentation existing = UserBuilder.create()
                 .username(KeycloakModelUtils.generateId())
@@ -374,13 +416,7 @@ public class UserTest extends AbstractScimTest {
 
     @Test
     public void testNoManagePermission() {
-        realm.admin().clients().create(ClientBuilder
-                .create()
-                .clientId("noaccess-scim-client")
-                .secret("secret")
-                .serviceAccountsEnabled(true)
-                .enabled(true)
-                .build()).close();
+        createScimClient("noaccess-scim-client");
 
         try {
             noAccessClient.users().create(createUser());
@@ -394,15 +430,9 @@ public class UserTest extends AbstractScimTest {
     @Test
     public void testPatchAdd() {
         User expected = client.users().create(createUser());
-        UPConfig configuration = realm.admin().users().userProfile().getConfiguration();
-        configuration.addOrReplaceAttribute(new UPAttribute("middleName", Map.of(
-                ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, "name.middleName")));
-        configuration.addOrReplaceAttribute(new UPAttribute("honorificPrefix", Map.of(
-                ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, "name.honorificPrefix")));
-        configuration.addOrReplaceAttribute(new UPAttribute("honorificSuffix", Map.of(
-                ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, "name.honorificSuffix")));
-        realm.admin().users().userProfile().update(configuration);
-        adminEvents.clear();
+        addOrReplaceUPAttribute("name.middleName");
+        addOrReplaceUPAttribute("name.honorificPrefix");
+        addOrReplaceUPAttribute("name.honorificSuffix");
 
         // patch multiple attributes in a single request
         client.users().patch(expected.getId(), PatchRequest.create()
@@ -499,9 +529,7 @@ public class UserTest extends AbstractScimTest {
         assertRootAttributes(actual, expected);
 
         // patch an attribute from an extension schema
-        configuration.addOrReplaceAttribute(new UPAttribute("employeeNumber", Map.of(
-                ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, ENTERPRISE_USER_SCHEMA + ".employeeNumber")));
-        realm.admin().users().userProfile().update(configuration);
+        addOrReplaceUPAttribute(ENTERPRISE_USER_SCHEMA, "employeeNumber");
         assertNull(actual.getEnterpriseUser());
         client.users().patch(expected.getId(), PatchRequest.create()
                 .add(ENTERPRISE_USER_SCHEMA + ":" + "employeeNumber", "1234")
@@ -537,9 +565,7 @@ public class UserTest extends AbstractScimTest {
         assertEquals("321", actual.getEnterpriseUser().getEmployeeNumber());
         assertEquals("Amanda", actual.getFirstName());
 
-        configuration.addOrReplaceAttribute(new UPAttribute("managerId", Map.of(
-                ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, ENTERPRISE_USER_SCHEMA + ".manager.value")));
-        realm.admin().users().userProfile().update(configuration);
+        addOrReplaceUPAttribute(ENTERPRISE_USER_SCHEMA, "manager.value");
         // patch a sub attribute of a complex attribute using a direct path
         client.users().patch(expected.getId(), PatchRequest.create()
                 .add("{\"name.givenName\": \"Alice\", \"" + ENTERPRISE_USER_SCHEMA + ":manager\": \"321\"}}")
@@ -563,14 +589,9 @@ public class UserTest extends AbstractScimTest {
     @Test
     public void testPatchReplace() {
         User expected = client.users().create(createUser());
-        UPConfig configuration = realm.admin().users().userProfile().getConfiguration();
-        configuration.addOrReplaceAttribute(new UPAttribute("middleName", Map.of(
-                ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, "name.middleName")));
-        configuration.addOrReplaceAttribute(new UPAttribute("honorificPrefix", Map.of(
-                ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, "name.honorificPrefix")));
-        configuration.addOrReplaceAttribute(new UPAttribute("honorificSuffix", Map.of(
-                ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, "name.honorificSuffix")));
-        realm.admin().users().userProfile().update(configuration);
+        addOrReplaceUPAttribute("name.middleName");
+        addOrReplaceUPAttribute("name.honorificPrefix");
+        addOrReplaceUPAttribute("name.honorificSuffix");
 
         // patch multiple attributes in a single request
         client.users().patch(expected.getId(), PatchRequest.create()
@@ -654,9 +675,7 @@ public class UserTest extends AbstractScimTest {
         assertRootAttributes(actual, expected);
 
         // patch an attribute from an extension schema
-        configuration.addOrReplaceAttribute(new UPAttribute("employeeNumber", Map.of(
-                ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, ENTERPRISE_USER_SCHEMA + ".employeeNumber")));
-        realm.admin().users().userProfile().update(configuration);
+        addOrReplaceUPAttribute(ENTERPRISE_USER_SCHEMA,  "employeeNumber");
         assertNull(actual.getEnterpriseUser());
         client.users().patch(expected.getId(), PatchRequest.create()
                 .replace(ENTERPRISE_USER_SCHEMA + ":" + "employeeNumber", "1234")
@@ -689,14 +708,9 @@ public class UserTest extends AbstractScimTest {
     @Test
     public void testPatchRemove() {
         User expected = client.users().create(createUser());
-        UPConfig configuration = realm.admin().users().userProfile().getConfiguration();
-        configuration.addOrReplaceAttribute(new UPAttribute("middleName", Map.of(
-                ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, "name.middleName")));
-        configuration.addOrReplaceAttribute(new UPAttribute("honorificPrefix", Map.of(
-                ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, "name.honorificPrefix")));
-        configuration.addOrReplaceAttribute(new UPAttribute("honorificSuffix", Map.of(
-                ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, "name.honorificSuffix")));
-        realm.admin().users().userProfile().update(configuration);
+        addOrReplaceUPAttribute("name.middleName");
+        addOrReplaceUPAttribute("name.honorificPrefix");
+        addOrReplaceUPAttribute("name.honorificSuffix");
 
         // patch multiple attributes in a single request
         client.users().patch(expected.getId(), PatchRequest.create()
@@ -723,11 +737,8 @@ public class UserTest extends AbstractScimTest {
         assertRootAttributes(actual, expected);
 
         assertNull(actual.getEnterpriseUser());
-        configuration.addOrReplaceAttribute(new UPAttribute("employeeNumber", Map.of(
-                ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, ENTERPRISE_USER_SCHEMA + ".employeeNumber")));
-        configuration.addOrReplaceAttribute(new UPAttribute("costCenter", Map.of(
-                ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, ENTERPRISE_USER_SCHEMA + ".costCenter")));
-        realm.admin().users().userProfile().update(configuration);
+        addOrReplaceUPAttribute(ENTERPRISE_USER_SCHEMA, "employeeNumber");
+        addOrReplaceUPAttribute(ENTERPRISE_USER_SCHEMA, "costCenter");
         client.users().patch(expected.getId(), PatchRequest.create()
                 .add(ENTERPRISE_USER_SCHEMA + ":" + "employeeNumber", "1234")
                 .add(ENTERPRISE_USER_SCHEMA + ":" + "costCenter", "5678")
@@ -1089,18 +1100,11 @@ public class UserTest extends AbstractScimTest {
 
     @Test
     public void testCreateCustomAttribute() {
-        UPConfig upConfig = realm.admin().users().userProfile().getConfiguration();
         String fooSchema = "urn:my:params:scim:schemas:extension:foo:1.0:User";
-        UPAttribute upAttribute = new UPAttribute("keycloak.team", Map.of(ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, fooSchema + ".memberOf"));
-        upAttribute.setPermissions(new UPAttributePermissions(Set.of(UPConfigUtils.ROLE_ADMIN), Set.of(UPConfigUtils.ROLE_ADMIN)));
-        upConfig.addOrReplaceAttribute(upAttribute);
-        realm.admin().users().userProfile().update(upConfig);
+        addOrReplaceUPAttribute(fooSchema, "memberOf");
 
         String barSchema = "urn:my:params:scim:schemas:extension:bar:1.0:User";
-        upAttribute = new UPAttribute("keycloak.area", Map.of(ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, barSchema + ".myattribute"));
-        upAttribute.setPermissions(new UPAttributePermissions(Set.of(UPConfigUtils.ROLE_ADMIN), Set.of(UPConfigUtils.ROLE_ADMIN)));
-        upConfig.addOrReplaceAttribute(upAttribute);
-        realm.admin().users().userProfile().update(upConfig);
+        addOrReplaceUPAttribute(barSchema, "myattribute");
 
         User user = new User();
 
@@ -1146,20 +1150,13 @@ public class UserTest extends AbstractScimTest {
         }
 
         // adds a user profile attribute
-        UPConfig upConfig = realm.admin().users().userProfile().getConfiguration();
-        UPAttribute upAttribute = new UPAttribute("keycloak.team", Map.of(ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, KEYCLOAK_USER_SCHEMA + ".memberOf"));
-        upAttribute.setPermissions(new UPAttributePermissions(Set.of(UPConfigUtils.ROLE_ADMIN), Set.of(UPConfigUtils.ROLE_ADMIN)));
-        upConfig.addOrReplaceAttribute(upAttribute);
-        realm.admin().users().userProfile().update(upConfig);
+        UPAttribute upAttribute = addOrReplaceUPAttribute(KEYCLOAK_USER_SCHEMA, "memberOf");
         existing = realm.admin().users().get(existing.getId()).toRepresentation();
         existing.singleAttribute(upAttribute.getName(), "core-iam");
         realm.admin().users().get(existing.getId()).update(existing);
 
         String customSchema = "urn:my:params:scim:schemas:extension:custom:1.0:User";
-        upAttribute = new UPAttribute("keycloak.area", Map.of(ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, customSchema + ".myattribute"));
-        upAttribute.setPermissions(new UPAttributePermissions(Set.of(UPConfigUtils.ROLE_ADMIN), Set.of(UPConfigUtils.ROLE_ADMIN)));
-        upConfig.addOrReplaceAttribute(upAttribute);
-        realm.admin().users().userProfile().update(upConfig);
+        upAttribute = addOrReplaceUPAttribute(customSchema, "myattribute");
         existing = realm.admin().users().get(existing.getId()).toRepresentation();
         existing.singleAttribute(upAttribute.getName(), "myvalue");
         realm.admin().users().get(existing.getId()).update(existing);
@@ -1222,17 +1219,10 @@ public class UserTest extends AbstractScimTest {
 
     @Test
     public void testPatchCustomAttribute() {
-        UPConfig upConfig = realm.admin().users().userProfile().getConfiguration();
-        UPAttribute upAttribute = new UPAttribute("keycloak.team", Map.of(ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, KEYCLOAK_USER_SCHEMA + ".memberOf"));
-        upAttribute.setPermissions(new UPAttributePermissions(Set.of(UPConfigUtils.ROLE_ADMIN), Set.of(UPConfigUtils.ROLE_ADMIN)));
-        upConfig.addOrReplaceAttribute(upAttribute);
-        realm.admin().users().userProfile().update(upConfig);
+        addOrReplaceUPAttribute(KEYCLOAK_USER_SCHEMA, "memberOf");
 
         String customSchema = "urn:my:params:scim:schemas:extension:custom:1.0:User";
-        upAttribute = new UPAttribute("keycloak.area", Map.of(ANNOTATION_SCIM_SCHEMA_ATTRIBUTE, customSchema + ".myattribute"));
-        upAttribute.setPermissions(new UPAttributePermissions(Set.of(UPConfigUtils.ROLE_ADMIN), Set.of(UPConfigUtils.ROLE_ADMIN)));
-        upConfig.addOrReplaceAttribute(upAttribute);
-        realm.admin().users().userProfile().update(upConfig);
+        addOrReplaceUPAttribute(customSchema, "myattribute");
 
         User user = new User();
 
@@ -1296,6 +1286,40 @@ public class UserTest extends AbstractScimTest {
         }
 
         return subGroup;
+    }
+
+    @Test
+    public void testMetaLocationUrl() {
+        User user = client.users().create(createUser());
+        String id = user.getId();
+
+        // location from create response should end with /Users/{id}
+        assertNotNull(user.getMeta());
+        assertTrue(user.getMeta().getLocation().endsWith("/Users/" + id),
+                "Create location should end with /Users/" + id + " but was: " + user.getMeta().getLocation());
+        assertFalse(user.getMeta().getLocation().contains(id + "/" + id),
+                "Create location should not contain duplicated ID: " + user.getMeta().getLocation());
+
+        // location from single-resource GET should also be correct
+        User fetched = client.users().get(id);
+        assertNotNull(fetched.getMeta());
+        assertTrue(fetched.getMeta().getLocation().endsWith("/Users/" + id),
+                "GET location should end with /Users/" + id + " but was: " + fetched.getMeta().getLocation());
+        assertFalse(fetched.getMeta().getLocation().contains(id + "/" + id),
+                "GET location should not contain duplicated ID: " + fetched.getMeta().getLocation());
+
+        // location from list response should match
+        String filter = ResourceFilter.filter().eq("userName", user.getUserName()).build();
+        ListResponse<User> response = client.users().getAll(filter);
+        assertFalse(response.getResources().isEmpty());
+        User listed = response.getResources().get(0);
+        assertNotNull(listed.getMeta());
+        assertTrue(listed.getMeta().getLocation().endsWith("/Users/" + id),
+                "List location should end with /Users/" + id + " but was: " + listed.getMeta().getLocation());
+
+        // all three locations should be equal
+        assertEquals(user.getMeta().getLocation(), fetched.getMeta().getLocation());
+        assertEquals(user.getMeta().getLocation(), listed.getMeta().getLocation());
     }
 
     @Test

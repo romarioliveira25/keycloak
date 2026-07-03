@@ -36,11 +36,11 @@ import org.keycloak.representations.idm.OrganizationRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.testframework.realm.UserBuilder;
+import org.keycloak.testframework.remote.providers.runonserver.RunOnServer;
 import org.keycloak.testsuite.admin.AdminApiUtil;
 import org.keycloak.testsuite.admin.ApiUtil;
 import org.keycloak.testsuite.broker.KcOidcBrokerConfiguration;
 import org.keycloak.testsuite.organization.admin.AbstractOrganizationTest;
-import org.keycloak.testsuite.runonserver.RunOnServer;
 import org.keycloak.testsuite.updaters.RealmAttributeUpdater;
 import org.keycloak.testsuite.util.FlowUtil;
 import org.keycloak.testsuite.util.oauth.AccessTokenResponse;
@@ -155,7 +155,7 @@ public class OrganizationAuthenticationTest extends AbstractOrganizationTest {
         appPage.assertCurrent();
 
         try {
-            setTimeOffset(10);
+            timeOffSet.set(10);
             oauth.realm(bc.consumerRealmName());
             oauth.loginForm().maxAge(1).kcAction(RequiredAction.UPDATE_PASSWORD.name()).open();
             loginPage.assertCurrent();
@@ -165,7 +165,7 @@ public class OrganizationAuthenticationTest extends AbstractOrganizationTest {
             updatePasswordPage.updatePasswords(memberPassword, memberPassword);
             appPage.assertCurrent();
         } finally {
-            resetTimeOffset();
+            timeOffSet.set(0);
         }
     }
 

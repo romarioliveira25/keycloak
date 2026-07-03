@@ -12,7 +12,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useAccess } from "./context/access/Access";
 import { useRealm } from "./context/realm-context/RealmContext";
 import { useServerInfo } from "./context/server-info/ServerInfoProvider";
-import { Environment } from "./environment";
+import type { Environment } from "./environment-types";
 import { toPage } from "./page/routes";
 import { routes } from "./routes";
 import { resolveDisplayName } from "./util";
@@ -66,7 +66,7 @@ const LeftNav = ({ title, path, id }: LeftNavProps) => {
 export const PageNav = () => {
   const { t } = useTranslation();
   const { environment } = useEnvironment<Environment>();
-  const { hasAccess, hasSomeAccess } = useAccess();
+  const { hasSomeAccess } = useAccess();
   const { componentTypes } = useServerInfo();
   const isFeatureEnabled = useIsFeatureEnabled();
   const pages =
@@ -102,7 +102,8 @@ export const PageNav = () => {
   );
 
   const showWorkflows =
-    hasAccess("manage-realm") && isFeatureEnabled(Feature.Workflows);
+    hasSomeAccess("realm-admin", "admin") &&
+    isFeatureEnabled(Feature.Workflows);
 
   const showManageRealm = environment.masterRealm === environment.realm;
 
@@ -115,7 +116,7 @@ export const PageNav = () => {
             style={{ wordWrap: "break-word" }}
           >
             <span data-testid="currentRealm">
-              {resolveDisplayName(t, realmRepresentation?.displayName, realm)}
+              {resolveDisplayName(t, realmRepresentation.displayName, realm)}
             </span>{" "}
             <Label color="blue">{t("currentRealm")}</Label>
           </h2>
@@ -127,7 +128,7 @@ export const PageNav = () => {
           {showManage && (
             <NavGroup aria-label={t("manage")} title={t("manage")}>
               {isFeatureEnabled(Feature.Organizations) &&
-                realmRepresentation?.organizationsEnabled && (
+                realmRepresentation.organizationsEnabled && (
                   <LeftNav title="organizations" path="/organizations" />
                 )}
               <LeftNav title="clients" path="/clients" />
@@ -145,7 +146,7 @@ export const PageNav = () => {
               <LeftNav title="realmSettings" path="/realm-settings" />
               <LeftNav title="authentication" path="/authentication" />
               {isFeatureEnabled(Feature.AdminFineGrainedAuthzV2) &&
-                realmRepresentation?.adminPermissionsEnabled && (
+                realmRepresentation.adminPermissionsEnabled && (
                   <LeftNav title="permissions" path="/permissions" />
                 )}
               <LeftNav title="identityProviders" path="/identity-providers" />
